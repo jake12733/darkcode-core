@@ -148,10 +148,18 @@ export function createServer(cfg = loadConfig()) {
   }
 
   // ---------- 라우팅 ----------
+  // 브라우저가 실제로 붙었는지 콘솔에서 보이게: origin+경로별 60초에 1번만 기록
+  const seen = new Map();
+  const noteOrigin = (level, key, msg) => { const now = Date.now(); if ((seen.get(key) || 0) > now - 60000) return; seen.set(key, now); log(level, msg); };
+
   const server = http.createServer(async (req, res) => {
     const allowed = cors(req, res);
+    const origin = req.headers.origin;
+    const path0 = req.url.split('?')[0];
+    if (origin && !allowed) noteOrigin('warn', `deny ${origin}`, `CORS 거부: origin=${origin} → 이 주소에서 쓰려면 darkcode.config.json 의 server.cors 에 추가`);
+    else if (origin) noteOrigin('info', `${origin} ${req.method} ${path0}`, `접속 ${req.method} ${path0} ← ${origin}`);
     if (req.method === 'OPTIONS') { res.writeHead(allowed ? 204 : 403); return res.end(); }
-    if (!allowed) return send(res, 403, { error: { message: 'origin 허용 안 됨 (server.cors)' } });
+    if (!allowed) return send(res, 403, { error: { message: `origin 허용 안 됨: ${origin} (server.cors)` } });
     const url = new URL(req.url, 'http://x');
     const p = url.pathname.replace(/\/+$/, '') || '/';
     if (cfg.server.token && p !== '/health' && req.headers.authorization !== `Bearer ${cfg.server.token}`) return send(res, 401, { error: { message: 'Bearer 토큰 필요' } });
@@ -227,10 +235,24 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
   let cfg;
   try { cfg = loadConfig(); } catch (e) { console.error(e.message); process.exit(1); }
   const server = createServer(cfg);
+  const where = `http://${cfg.server.host}:${cfg.server.port}`;
+  server.on('error', async (e) => {
+    if (e.code !== 'EADDRINUSE') { log('error', `서버 시작 실패: ${e.message}`); process.exit(1); }
+    // 포트를 이미 누가 쓰는지 확인: 이미 떠 있는 darkcode-core 면 중복 실행일 뿐
+    let mine = false;
+    try { const r = await fetch(`${where}/health`, { signal: AbortSignal.timeout(2000) }); mine = (await r.json()).name === 'darkcode-core'; } catch { /* 다른 프로그램 */ }
+    if (mine) { log('ok', `이미 ${where} 에서 darkcode-core 가 실행 중입니다. 그 창을 그대로 쓰면 됩니다 (중복 실행 종료).`); process.exit(0); }
+    log('error', `포트 ${cfg.server.port} 을 다른 프로그램이 쓰고 있습니다. verify-core.bat 로 점유 프로그램을 확인하거나, .env 에 DC_PORT=8788 을 넣고 DARK CODE CORE 창의 게이트웨이 주소도 http://127.0.0.1:8788 로 바꾸세요.`);
+    process.exit(2);
+  });
   server.listen(cfg.server.port, cfg.server.host, async () => {
-    log('ok', `DARK CODE Core ${VERSION} · http://${cfg.server.host}:${cfg.server.port} · profile=${cfg.profile}`);
+    log('ok', `DARK CODE Core ${VERSION} · ${where} · profile=${cfg.profile}`);
     for (const e of await server.dc.engines.status()) log(e.health.ok ? 'ok' : (e.enabled ? 'warn' : 'debug'), `engine ${e.id.padEnd(9)} ${e.enabled ? (e.health.ok ? 'UP   ' : 'DOWN ') : 'off  '} ${e.baseUrl || ''} ${e.enabled && !e.health.ok ? '· ' + e.health.detail : ''}`);
+    const oll = Object.entries(cfg.engines).find(([, e]) => e.type === 'ollama' && e.enabled);
+    if (oll && !(await server.dc.engines.health(oll[0], { fresh: true })).ok) log('warn', 'Ollama 가 꺼져 있어 CORE 요청이 실패합니다. Ollama 를 켜면 이 창은 그대로 두어도 10초 안에 자동으로 다시 확인합니다.');
+    if (cfg.server.token) log('warn', 'DC_TOKEN 이 설정되어 있습니다. DARK CODE 브라우저 CORE 모드는 토큰을 보내지 않아 401 이 납니다. PC 단독 사용이면 .env 의 DC_TOKEN 을 비우세요.');
     if (cfg.server.host !== '127.0.0.1' && !cfg.server.token) log('warn', '외부에 열려 있는데 DC_TOKEN 이 없습니다. 서버 배포 시 반드시 토큰을 설정하세요.');
+    log('info', '브라우저 확인: https://jake12733.github.io/darkcode-ai/ → 상단 CORE 버튼 → [연결 진단]. 브라우저가 붙으면 여기에 "접속 GET /health ← https://jake12733.github.io" 가 찍힙니다.');
   });
   const bye = () => { server.dc.engines.shutdown(); process.exit(0); };
   process.on('SIGINT', bye); process.on('SIGTERM', bye);
