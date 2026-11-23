@@ -15,6 +15,22 @@ DARK CODE AI의 백엔드 게이트웨이. 여러 추론 엔진을 역할별로 
 2. `start-darkcode-core.bat` 더블클릭 (Node 가 없으면 자동 설치)
 3. https://jake12733.github.io/darkcode-ai/ → 입력창 모드에서 **CORE** 선택
 
+## AI 작곡 (ACE-Step 1.5)
+
+대충 친 한 줄 → 작곡 역할(qwen3:8b)이 제목·스타일 태그·가사·BPM·키·길이를 JSON 으로 설계 → [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5)(MIT, 보컬 포함, 50+ 언어, 4~8GB VRAM)가 실제 노래(mp3)를 생성 → `data/media/` 에 저장.
+
+1. `setup-acestep.bat` 한 번 실행 (uv 설치 → 소스 → `uv sync` → 8GB GPU 설정 → `.env` 에 `ACESTEP_DIR` 등록)
+2. `start-darkcode-core.bat` → 첫 곡 요청 때 ACE-Step 이 자동 기동 (모델 자동 다운로드로 첫 회는 수 분), 10분 유휴 시 자동 종료
+3. https://jake12733.github.io/darkcode-ai/studio.html 또는 DARK CODE 입력창에 `/music 비 오는 밤 감성`
+
+ACE-Step 이 없으면 작곡안 + Suno 붙여넣기용 스타일·가사만 반환합니다. 같은 GPU 풀(gpu0)이라 Ollama 와 동시에 올라가지 않습니다.
+
+| 메서드 | 경로 | 설명 |
+|-|-|-|
+| POST | `/dc/music` | `{input, instrumental?, duration?, language?, lyrics?}` → SSE: `compose · progress · done{track, song, handoff}` |
+| POST | `/dc/storyboard` | `{input, song, duration, format}` → 영상 장면 JSON (STUDIO 영상 탭) |
+| GET | `/dc/media` · `/dc/media/:file` | 생성 음악 목록 / 파일 (Range 지원) |
+
 ## 테스트
 
 ```bash
