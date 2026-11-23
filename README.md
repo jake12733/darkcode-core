@@ -31,6 +31,25 @@ DARK CODE AI의 백엔드 게이트웨이. 여러 추론 엔진을 역할별로 
 
 브라우저 쪽은 DARK CODE 상단 **CORE → [연결 진단]** 이 같은 요청을 실제 브라우저에서 보내고, 실패하면 "게이트웨이 미기동 / CORS 거부 / 브라우저의 localhost 차단" 중 어디인지 갈라서 알려 줍니다. 브라우저가 붙으면 게이트웨이 창에 `접속 GET /health ← https://jake12733.github.io` 가 찍힙니다.
 
+## 코드 실행기 (runner · AstraUnifiedEngine)
+
+AI 가 만든 코드를 내 PC 에서 **승인 후** 실행하고, 실제 관측 결과(stdout · exit code)로만 VERIFIED 를 판정하는 별도 실행기입니다. 게이트웨이(8787)와 분리된 **127.0.0.1:8797**.
+
+1. `start-runner.bat` → 실행 요청마다 그 창에 코드 미리보기 + `y/N` (60초 무응답 = 거부). 자동 실행은 `start-runner.bat --auto`
+2. 브라우저 쪽 엔진: `runner/astra-unified-engine.js` (ES 모듈, 기본 `runnerUrl` = `http://127.0.0.1:8797/run`)
+
+| 안전장치 | 내용 |
+|-|-|
+| 바인딩 · Host | 127.0.0.1 전용, Host 헤더가 루프백이 아니면 403 (DNS 리바인딩 차단) |
+| Origin | jake12733.github.io · localhost · 127.0.0.1 만 허용 (Origin null 거부) |
+| 실행 방식 | 셸 없음 · `spawn(node, [파일, ...인자])` · `command` 는 공백으로 나눈 인자로만 전달 |
+| 격리 | 실행마다 `runner/workspace/<runId>/` · Node 권한 모델(`--permission`)로 작업 폴더 밖 파일·자식 프로세스 차단 (Node 22.13+), 최근 20개만 보관 |
+| 시간 · 출력 | 기본 15초(최대 60초) 후 프로세스 트리 강제 종료 · stdout/stderr 64KB 상한 |
+| 기록 | `runner/runner.log` 에 요청마다 origin · runId · codeHash · 승인 여부 · 결과 |
+| 언어 | JavaScript(ESM, `.mjs`) 기본. Python 은 `--python` 으로만 (권한 격리 없음) |
+
+판정: `executed && exitCode === 0 && stdout 있음 && !fallbackUsed` 일 때만 VERIFIED → committed(코드 포함). 실행기 꺼짐·HTTP 오류·승인 거부는 재시도 없이 즉시 중단(`stopReason`).
+
 ## AI 작곡 (ACE-Step 1.5)
 
 대충 친 한 줄 → 작곡 역할(qwen3:8b)이 제목·스타일 태그·가사·BPM·키·길이를 JSON 으로 설계 → [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5)(MIT, 보컬 포함, 50+ 언어, 4~8GB VRAM)가 실제 노래(mp3)를 생성 → `data/media/` 에 저장.

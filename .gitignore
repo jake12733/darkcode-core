@@ -3,3 +3,5 @@ data/
 models/
 node_modules/
 *.log
+runner/workspace/
+runner/runner.log
