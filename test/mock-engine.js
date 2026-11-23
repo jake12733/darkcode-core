@@ -12,7 +12,9 @@ export function startMock(port = 18081) {
     const sys = body.messages.find((m) => m.role === 'system')?.content || '';
     const schema = body.response_format?.json_schema?.schema;
     let text, reasoning = '', finish = 'stop';
-    if (schema?.properties?.category) { const req = (last.match(/분류할 요청:\n([\s\S]*?)\n\n/) || [, last])[1]; text = JSON.stringify({ category: /보안|취약/.test(req) ? 'security' : 'general', reason: 'mock 분류' }); }
+    if (schema?.properties?.caption && schema?.properties?.lyrics) text = JSON.stringify({ title: '빗속의 네온', caption: 'synthwave, retro, rainy night, analog synth, drum machine, female vocal, dreamy', lyrics: '[Verse 1]\n젤은 거리를 걸어\n[Chorus]\n네온 아래서 춤을 춰', bpm: 98, key: 'A Minor', duration: 60, language: 'ko', instrumental: false, mood: '비 오는 밤 레트로' });
+    else if (schema?.properties?.scenes) text = JSON.stringify({ title: '빗속의 네온', palette: ['#00FF66', '#7C3AED', '#0EA5E9'], scenes: [{ dur: 5, template: 'kinetic', text: '빗속의 네온', sub: 'DARK CODE', palette: ['#00FF66', '#7C3AED', '#0EA5E9'] }, { dur: 5, template: 'bars', text: '젤은 거리', sub: '', palette: ['#F472B6', '#7C3AED', '#0EA5E9'] }, { dur: 5, template: 'nope', text: '네온 아래', sub: '', palette: ['bad', '#7C3AED', '#0EA5E9'] }] });
+    else if (schema?.properties?.category) { const req = (last.match(/분류할 요청:\n([\s\S]*?)\n\n/) || [, last])[1]; text = JSON.stringify({ category: /보안|취약/.test(req) ? 'security' : 'general', reason: 'mock 분류' }); }
     else if (schema?.properties?.verdict) { criticCalls++; text = JSON.stringify(criticCalls % 2 === 1 ? { verdict: 'REVISE', score: 6, reason: 'mock: 접근성 보완 필요', fixes: ['버튼에 aria-label 추가'] } : { verdict: 'PASS', score: 9, reason: 'mock: 통과', fixes: [] }); }
     else if (/전략가/.test(sys)) text = '- 목표: 요청 해석\n- 구조: 단일 파일\n- 가정: 기본 다크 테마';
     else if (/\[\[LENGTH\]\]/.test(last) && lengthOnce) { lengthOnce = false; text = '```python\nprint("part1")'; finish = 'length'; }
@@ -28,6 +30,24 @@ export function startMock(port = 18081) {
     w({ choices: [{ delta: {}, finish_reason: finish }] });
     w({ choices: [], usage: { prompt_tokens: 10, completion_tokens: 20 } });
     res.end('data: [DONE]\n\n');
+  });
+  return new Promise((r) => server.listen(port, '127.0.0.1', () => r(server)));
+}
+
+// 가짜 ACE-Step API (release_task → query_result 2회차에 완료 → v1/audio)
+export function startMockAceStep(port = 18082) {
+  const tasks = new Map();
+  const server = http.createServer(async (req, res) => {
+    const chunks = []; for await (const c of req) chunks.push(c);
+    const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString() || '{}') : {};
+    const ok = (data) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ data, code: 200, error: null, timestamp: Date.now() })); };
+    if (req.url === '/health') return ok({ status: 'ok', service: 'ACE-Step API', version: '1.0' });
+    if (req.url === '/release_task') { const id = 'task-' + tasks.size; tasks.set(id, { polls: 0, body }); return ok({ task_id: id, status: 'queued', queue_position: 1 }); }
+    if (req.url === '/query_result') {
+      return ok(body.task_id_list.map((id) => { const t = tasks.get(id); t.polls++; return t.polls < 2 ? { task_id: id, status: 0 } : { task_id: id, status: 1, result: JSON.stringify([{ file: '/v1/audio?path=%2Ftmp%2Fx.mp3', status: 1, prompt: t.body.prompt, lyrics: t.body.lyrics, metas: { bpm: t.body.bpm, duration: t.body.audio_duration, keyscale: t.body.key_scale }, dit_model: 'acestep-v15-turbo', lm_model: 'acestep-5Hz-lm-0.6B' }]) }; }));
+    }
+    if (req.url.startsWith('/v1/audio')) { res.writeHead(200, { 'Content-Type': 'audio/mpeg' }); return res.end(Buffer.from('ID3MOCKAUDIO'.repeat(100))); }
+    res.writeHead(404); res.end();
   });
   return new Promise((r) => server.listen(port, '127.0.0.1', () => r(server)));
 }

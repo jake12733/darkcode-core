@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
-import { startMock } from './mock-engine.js';
+import { startMock, startMockAceStep } from './mock-engine.js';
 import { createServer } from '../src/server.js';
 import { loadConfig } from '../src/config.js';
 import { thinkSplitter } from '../src/adapters/base.js';
@@ -25,12 +25,14 @@ base.storage.path = path.join(tmp, 'test.db');
 base.engines = {
   dead: { type: 'openai', enabled: true, baseUrl: 'http://127.0.0.1:18999/v1', pool: 'gpu0' },
   mock: { type: 'openai', enabled: true, baseUrl: 'http://127.0.0.1:18081/v1', pool: 'gpu0' },
+  music: { type: 'acestep', enabled: true, baseUrl: 'http://127.0.0.1:18082', pool: 'gpu0' },
 };
 for (const role of Object.keys(base.roles)) base.roles[role] = [{ engine: 'dead', model: 'x' }, { engine: 'mock', model: role === 'escalate' ? 'mock-big' : 'mock-small', system: role === 'strategist' ? 'prompts/strategist.md' : role === 'implementer.web' ? 'prompts/web.md' : undefined }].map((c) => (c.system ? c : { engine: c.engine, model: c.model }));
 const cfgFile = path.join(tmp, 'config.json');
 fs.writeFileSync(cfgFile, JSON.stringify(base));
 
 const mock = await startMock(18081);
+const ace = await startMockAceStep(18082);
 const server = createServer(loadConfig(cfgFile));
 await new Promise((r) => server.listen(18787, '127.0.0.1', r));
 const U = 'http://127.0.0.1:18787';
@@ -129,6 +131,30 @@ await t('CORS: 허용 origin 프리플라이트 + 차단 origin', async () => {
   assert.equal(bad.status, 403);
 });
 
+let track;
+await t('/dc/music: 대충 친 명령 → 작곡 설계(JSON) → ACE-Step 생성 → mp3 저장', async () => {
+  const r = await fetch(U + '/dc/music', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: '비 오는 밤 레트로 감성' }) });
+  const txt = await r.text();
+  const ev = txt.split('\n\n').filter((b) => b.startsWith('event:')).map((b) => { const [e, d] = b.split('\n'); return { type: e.slice(7), data: JSON.parse(d.slice(6)) }; });
+  const comp = ev.find((e) => e.type === 'compose').data;
+  assert.equal(comp.title, '빗속의 네온'); assert.equal(comp.bpm, 98); assert.match(comp.lyrics, /\[Chorus\]/);
+  assert.ok(ev.some((e) => e.type === 'progress' && e.data.phase === 'running'), '진행 상황 이벤트');
+  const done = ev.find((e) => e.type === 'done').data;
+  assert.ok(done.track && done.track.url.endsWith('.mp3')); track = done.track;
+  assert.match(done.handoff.style, /synthwave/);
+});
+await t('/dc/media 목록 + 파일 제공(Range 요청)', async () => {
+  const list = await J('/dc/media'); assert.ok(list.body.some((m) => m.id === track.id && m.song.title === '빗속의 네온'));
+  const f = await fetch(U + track.url, { headers: { Range: 'bytes=0-9' } }); assert.equal(f.status, 206); assert.equal((await f.arrayBuffer()).byteLength, 10);
+  const bad = await fetch(U + '/dc/media/..%2Fdarkcode.db'); assert.equal(bad.status, 404);
+});
+await t('/dc/storyboard: 장면 JSON 정규화 (잘못된 템플릿·색 보정, 길이 맞춤)', async () => {
+  const r = await J('/dc/storyboard', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: '네온 뮤비', song: track.song, duration: 30 }) });
+  assert.equal(r.body.by, 'ai'); assert.equal(r.body.scenes.length, 3);
+  assert.equal(r.body.scenes[2].template, 'kinetic');
+  assert.ok(Math.abs(r.body.scenes.reduce((a, s) => a + s.dur, 0) - 30) < 0.1);
+});
+
 if (process.env.DC_LIVE) {
   const live = createServer(loadConfig());
   await new Promise((r) => live.listen(18788, '127.0.0.1', r));
@@ -139,7 +165,7 @@ if (process.env.DC_LIVE) {
   live.close();
 }
 
-server.close(); mock.close(); server.dc.engines.shutdown();
+server.close(); mock.close(); ace.close(); server.dc.engines.shutdown();
 for (const [s, n, ms, err] of results) console.log(`${s === 'PASS' ? '\x1b[32mPASS\x1b[0m' : '\x1b[31mFAIL\x1b[0m'} ${n} (${ms}ms)${err ? '\n     ' + err : ''}`);
 const failed = results.filter((r) => r[0] === 'FAIL').length;
 console.log(`\n${results.length - failed}/${results.length} passed`);
