@@ -1,0 +1,130 @@
+{
+  "profile": "local",
+
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8787,
+    "cors": ["https://jake12733.github.io", "http://localhost:*", "http://127.0.0.1:*"],
+    "token": "${DC_TOKEN}"
+  },
+
+  "pools": {
+    "gpu0":   { "concurrency": 1, "exclusive": true },
+    "server": { "concurrency": 16, "exclusive": false }
+  },
+
+  "engines": {
+    "ollama": {
+      "type": "ollama",
+      "enabled": true,
+      "baseUrl": "http://127.0.0.1:11434",
+      "pool": "gpu0",
+      "keepAlive": "0"
+    },
+    "lmstudio": {
+      "type": "openai",
+      "enabled": false,
+      "baseUrl": "http://127.0.0.1:1234/v1",
+      "pool": "gpu0",
+      "launch": { "cmd": "lms", "args": ["server", "start"], "readyTimeoutSec": 60, "idleStopSec": 0 }
+    },
+    "llamacpp": {
+      "type": "openai",
+      "enabled": false,
+      "baseUrl": "http://127.0.0.1:8080/v1",
+      "pool": "gpu0",
+      "launch": {
+        "cmd": "llama-server",
+        "args": ["-m", "models/qwen3-8b-q4_k_m.gguf", "--port", "8080", "-c", "16384", "-ngl", "99", "--jinja"],
+        "readyTimeoutSec": 180,
+        "idleStopSec": 300
+      }
+    },
+    "localai": {
+      "type": "openai",
+      "enabled": false,
+      "baseUrl": "http://127.0.0.1:8081/v1",
+      "pool": "gpu0"
+    },
+    "vllm": {
+      "type": "openai",
+      "enabled": false,
+      "baseUrl": "${VLLM_URL}",
+      "apiKey": "${VLLM_API_KEY}",
+      "pool": "server",
+      "reasoning": true
+    },
+    "sglang": {
+      "type": "openai",
+      "enabled": false,
+      "baseUrl": "${SGLANG_URL}",
+      "apiKey": "${SGLANG_API_KEY}",
+      "pool": "server",
+      "reasoning": true
+    }
+  },
+
+  "roles": {
+    "router": [
+      { "engine": "ollama", "model": "qwen3:8b", "system": "prompts/router.md", "params": { "temperature": 0, "max_tokens": 120, "think": false } }
+    ],
+    "strategist": [
+      { "engine": "vllm", "model": "qwen3-32b", "profiles": ["server", "hybrid"], "system": "prompts/strategist.md", "params": { "temperature": 0.4, "max_tokens": 900 } },
+      { "engine": "ollama", "model": "qwen3:8b", "system": "prompts/strategist.md", "params": { "temperature": 0.4, "max_tokens": 900, "think": false } }
+    ],
+    "implementer.code": [
+      { "engine": "vllm", "model": "qwen3-32b", "profiles": ["server", "hybrid"], "system": "prompts/core.md", "params": { "temperature": 0.3, "max_tokens": 16384 } },
+      { "engine": "llamacpp", "model": "qwen3-8b", "system": "prompts/core.md", "params": { "temperature": 0.3, "max_tokens": 8192 } },
+      { "engine": "ollama", "model": "ai-dev", "params": { "max_tokens": 8192, "think": true } }
+    ],
+    "implementer.web": [
+      { "engine": "vllm", "model": "qwen3-32b", "profiles": ["server", "hybrid"], "system": "prompts/web.md", "params": { "temperature": 0.5, "max_tokens": 16384 } },
+      { "engine": "ollama", "model": "ai-dev", "params": { "max_tokens": 8192, "think": true } }
+    ],
+    "implementer.security": [
+      { "engine": "sglang", "model": "qwen3-32b", "profiles": ["server", "hybrid"], "system": "prompts/security.md", "params": { "temperature": 0.2, "max_tokens": 8192 } },
+      { "engine": "ollama", "model": "qwen3:8b", "system": "prompts/security.md", "params": { "temperature": 0.2, "max_tokens": 4096, "think": false } }
+    ],
+    "implementer.prompt": [
+      { "engine": "ollama", "model": "ai-media", "params": { "max_tokens": 3072, "think": false } }
+    ],
+    "implementer.general": [
+      { "engine": "ollama", "model": "ai-qa", "params": { "max_tokens": 2048, "think": false } }
+    ],
+    "critic": [
+      { "engine": "ollama", "model": "ai-critic", "params": { "temperature": 0.1, "max_tokens": 600, "think": false } }
+    ],
+    "escalate": [
+      { "engine": "vllm", "model": "qwen3-32b", "profiles": ["server", "hybrid"], "system": "prompts/core.md", "params": { "temperature": 0.3, "max_tokens": 16384 } }
+    ]
+  },
+
+  "categories": {
+    "security": { "label": "보안·시스템 분석", "pipeline": "full",
+      "keywords": ["보안", "취약점", "cve", "exploit", "익스플로잇", "침투", "pentest", "모의해킹", "xss", "sql injection", "sqli", "csrf", "ssrf", "rce", "포트", "nmap", "로그 분석", "방화벽", "악성", "malware", "패킷", "wireshark", "권한 상승", "privilege", "hardening", "하드닝", "ctf", "리버싱", "reversing", "인증", "jwt", "owasp", "siem", "yara", "sigma"] },
+    "web": { "label": "UI·웹 생성", "pipeline": "full",
+      "keywords": ["홈페이지", "웹사이트", "랜딩", "landing", "웹페이지", "ui", "ux", "대시보드", "dashboard", "html", "css", "레이아웃", "반응형", "컴포넌트", "버튼", "폼", "모달", "디자인", "tailwind", "페이지 만들어"] },
+    "code": { "label": "코드·개발", "pipeline": "full",
+      "keywords": ["코드", "코딩", "함수", "버그", "에러", "error", "오류", "디버깅", "debug", "api", "서버", "server", "db", "데이터베이스", "sql", "스크립트", "script", "python", "파이썬", "node", "javascript", "typescript", "rust", "go ", "리팩터", "refactor", "테스트", "자동화", "크롤링", "docker", "알고리즘", "클래스", "모듈"] },
+    "prompt": { "label": "프롬프트 정제·시각 엔진", "pipeline": "fast",
+      "keywords": ["프롬프트", "prompt", "이미지", "image", "사진", "그림", "영상", "video", "썸네일", "포스터", "미드저니", "midjourney", "stable diffusion", "flux", "콘티", "스토리보드", "로고"] },
+    "general": { "label": "일반 질의", "pipeline": "fast", "keywords": [] }
+  },
+
+  "pipelines": {
+    "fast": ["cache", "context", "route", "implementer", "verify", "render"],
+    "full": ["cache", "context", "route", "strategist", "implementer", "critic", "gate", "render"]
+  },
+
+  "limits": {
+    "maxRevisions": 2,
+    "contextTokens": 6000,
+    "keepRecentMessages": 4,
+    "cacheTtlSec": 86400,
+    "routerMinScore": 2,
+    "requestTimeoutSec": 900,
+    "maxBodyBytes": 2000000
+  },
+
+  "storage": { "path": "data/darkcode.db" }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "darkcode-core",
+  "version": "0.1.0",
+  "description": "DARK CODE AI core gateway: engine adapters (Ollama, llama.cpp, LM Studio, LocalAI, vLLM, SGLang) + router/pipeline + unified session store",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "start": "node src/server.js",
+    "mock": "node test/mock-engine.js",
+    "test": "node test/smoke.js"
+  },
+  "license": "MIT"
+}
