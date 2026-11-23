@@ -8,7 +8,7 @@ export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 function loadDotEnv() {
   const p = path.join(ROOT, '.env');
   if (!fs.existsSync(p)) return;
-  for (const line of fs.readFileSync(p, 'utf8').split(/\r?\n/)) {
+  for (const line of fs.readFileSync(p, 'utf8').replace(/^\uFEFF/, '').split(/\r?\n/)) {
     const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/i);
     if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '');
   }
@@ -31,8 +31,10 @@ export function loadConfig(file = process.env.DC_CONFIG || path.join(ROOT, 'dark
 
   const errors = [];
   for (const [id, e] of Object.entries(cfg.engines || {})) {
-    if (!['ollama', 'openai'].includes(e.type)) errors.push(`engines.${id}.type 은 ollama | openai`);
+    if (!['ollama', 'openai', 'acestep'].includes(e.type)) errors.push(`engines.${id}.type 은 ollama | openai | acestep`);
     if (e.enabled && !e.baseUrl) { e.enabled = false; e.disabledReason = 'baseUrl 비어 있음 (환경변수 미설정)'; }
+    // launch.cwd 가 환경변수로 비어 있으면 자동 기동만 끄고 엔진은 유지 (사용자가 직접 띄운 서버는 그대로 사용)
+    if (e.launch && 'cwd' in e.launch && !e.launch.cwd) delete e.launch;
     if (e.pool && !cfg.pools?.[e.pool]) errors.push(`engines.${id}.pool "${e.pool}" 이 pools 에 없음`);
   }
   for (const [role, list] of Object.entries(cfg.roles || {})) {

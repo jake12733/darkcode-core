@@ -10,6 +10,24 @@ import { EngineManager } from './engines/manager.js';
 import { RoleRouter } from './router/roles.js';
 import { Store } from './store/db.js';
 import { runPipeline } from './pipeline/run.js';
+import { runMusic, makeStoryboard } from './media/music.js';
+import fs from 'node:fs';
+import path from 'node:path';
+
+const MIME = { mp3: 'audio/mpeg', wav: 'audio/wav', flac: 'audio/flac', webm: 'video/webm', mp4: 'video/mp4', png: 'image/png', jpg: 'image/jpeg' };
+function serveFile(req, res, file) {
+  const stat = fs.statSync(file);
+  const type = MIME[path.extname(file).slice(1)] || 'application/octet-stream';
+  const range = req.headers.range && /bytes=(\d*)-(\d*)/.exec(req.headers.range);
+  if (range) {
+    const start = range[1] ? Number(range[1]) : 0;
+    const end = range[2] ? Math.min(Number(range[2]), stat.size - 1) : stat.size - 1;
+    res.writeHead(206, { 'Content-Type': type, 'Content-Range': `bytes ${start}-${end}/${stat.size}`, 'Accept-Ranges': 'bytes', 'Content-Length': end - start + 1 });
+    return fs.createReadStream(file, { start, end }).pipe(res);
+  }
+  res.writeHead(200, { 'Content-Type': type, 'Content-Length': stat.size, 'Accept-Ranges': 'bytes', 'Cache-Control': 'private, max-age=86400' });
+  fs.createReadStream(file).pipe(res);
+}
 
 const VERSION = '0.1.0';
 const C = { reset: '\x1b[0m', dim: '\x1b[2m', green: '\x1b[32m', yellow: '\x1b[33m', red: '\x1b[31m', cyan: '\x1b[36m' };
@@ -37,7 +55,8 @@ export function createServer(cfg = loadConfig()) {
     if (origin && originOk(origin)) {
       res.setHeader('Access-Control-Allow-Origin', origin);
       res.setHeader('Vary', 'Origin');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-DC-Session');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-DC-Session, Range');
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Accept-Ranges, Content-Length');
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
       res.setHeader('Access-Control-Allow-Private-Network', 'true');
       res.setHeader('Access-Control-Max-Age', '600');
@@ -161,6 +180,29 @@ export function createServer(cfg = loadConfig()) {
         try { await runPipeline({ cfg, store, roles, input: String(b.input), sessionId: b.sessionId, mode: b.mode || 'auto', category: b.category, noCache: !!b.noCache, signal, emit }); }
         catch { /* error 이벤트는 runPipeline 이 이미 보냄 */ }
         return res.end();
+      }
+
+      // ---------- 음악·영상 ----------
+      if (req.method === 'POST' && p === '/dc/music') {
+        const b = await body(req);
+        if (!b.input || !String(b.input).trim()) return send(res, 400, { error: { message: 'input 필요 (대충 써도 됩니다)' } });
+        const signal = abortOnClose(req, res);
+        const emit = sse(res);
+        try { await runMusic({ cfg, store, roles, engines, input: String(b.input), options: { instrumental: b.instrumental, duration: b.duration, language: b.language, lyrics: b.lyrics }, signal, emit }); }
+        catch (e) { if (!signal.aborted) emit('error', { message: e.message }); }
+        return res.end();
+      }
+      if (req.method === 'POST' && p === '/dc/storyboard') {
+        const b = await body(req);
+        const sb = await makeStoryboard({ roles, input: String(b.input || ''), song: b.song || {}, duration: Math.max(5, Math.min(600, Number(b.duration) || 30)), format: b.format || '9:16', signal: abortOnClose(req, res), log });
+        return send(res, 200, sb);
+      }
+      if (req.method === 'GET' && p === '/dc/media') return send(res, 200, store.media(Number(url.searchParams.get('limit')) || 100));
+      const mm = p.match(/^\/dc\/media\/([\w-]+\.(mp3|wav|flac|webm|mp4|png|jpg))$/);
+      if (mm && req.method === 'GET') {
+        const f = path.join(path.dirname(cfg.storage.path), 'media', mm[1]);
+        if (!fs.existsSync(f)) return send(res, 404, { error: { message: '파일 없음' } });
+        return serveFile(req, res, f);
       }
 
       if (req.method === 'GET' && p === '/dc/sessions') return send(res, 200, store.sessions(Number(url.searchParams.get('limit')) || 50));
