@@ -2,9 +2,11 @@ name: smoke
 on: [push, pull_request]
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest]
         node: ['22', '24']
     steps:
       - uses: actions/checkout@v4
@@ -12,3 +14,6 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - run: node test/smoke.js
+      - run: node test/runner-test.js
+        env:
+          RUNNER_REQUIRE_SPAWN: '1'
