@@ -84,6 +84,15 @@
 - **OpenAI 호환**: `model` 을 `dc-auto`(fast 파이프라인) · `dc-pipeline`(full) · `role:<역할>` · `<엔진>/<모델>` 로 지정. 세션은 `X-DC-Session` 헤더.
 - 브라우저가 Ollama 를 직접 부르지 않으므로 `OLLAMA_ORIGINS` 설정이 필요 없다 (게이트웨이가 CORS 허용 목록을 관리).
 
+## 미디어 파이프라인 (음악·영상)
+
+```
+/dc/music   COMPOSE(composer 역할, JSON 스키마 · 한국어 가사 검증/재작성) → RENDER(ACE-Step: release_task → query_result 폴링 → mp3) → media 테이블
+/dc/storyboard  storyboard 역할 → 장면 JSON(템플릿 enum · 색 검증 · 길이 정규화), 실패 시 가사 기반 기본 구성
+```
+- ACE-Step 은 `type: "acestep"` 엔진으로 같은 매니저가 관리 (gpu0 풀 · 요청 시 `uv run acestep-api` 기동 · 10분 유휴 종료 · CPU 오프로드)
+- 영상 렌더링은 서버가 아니라 브라우저(STUDIO)에서: Canvas 템플릿 7종이 WebAudio 분석값(저음·중음·비트)에 반응, MediaRecorder 로 MP4/WebM 저장
+
 ## 단계별 로드맵
 
 ### Phase 1 — PC 최소 작동 버전 (지금)
