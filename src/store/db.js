@@ -18,6 +18,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS logs (id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT, ts INTEGER, level TEXT, msg TEXT);
       CREATE INDEX IF NOT EXISTS idx_logs_run ON logs(run_id, id);
       CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, value TEXT, expires INTEGER);
+      CREATE TABLE IF NOT EXISTS media (id TEXT PRIMARY KEY, kind TEXT, title TEXT, file TEXT, meta TEXT, created INTEGER);
     `);
     this.q = {
       insSession: this.db.prepare('INSERT INTO sessions (id, title, snapshot, created, updated) VALUES (?, ?, NULL, ?, ?)'),
@@ -38,6 +39,10 @@ export class Store {
       cacheGet: this.db.prepare('SELECT value, expires FROM cache WHERE key = ?'),
       cachePut: this.db.prepare('INSERT OR REPLACE INTO cache (key, value, expires) VALUES (?, ?, ?)'),
       cachePurge: this.db.prepare('DELETE FROM cache WHERE expires < ?'),
+      insMedia: this.db.prepare('INSERT OR REPLACE INTO media (id, kind, title, file, meta, created) VALUES (?, ?, ?, ?, ?, ?)'),
+      listMedia: this.db.prepare('SELECT * FROM media ORDER BY created DESC LIMIT ?'),
+      getMediaByFile: this.db.prepare('SELECT * FROM media WHERE file = ?'),
+      delMedia: this.db.prepare('DELETE FROM media WHERE id = ?'),
     };
   }
 
@@ -63,6 +68,11 @@ export class Store {
   finishRun(id, { category, pipeline, status, route, result, ms }) { this.q.updRun.run(category || null, pipeline || null, status, JSON.stringify(route || []), result ? JSON.stringify(result) : null, ms || 0, id); }
   run(id) { const r = this.q.getRun.get(id); return r && { ...r, route: JSON.parse(r.route || '[]'), result: r.result ? JSON.parse(r.result) : null, logs: this.q.logs.all(id) }; }
   log(runId, level, msg) { this.q.insLog.run(runId, Date.now(), level, msg); }
+
+  addMedia(m) { const { id, kind, title, file, created, ...rest } = m; this.q.insMedia.run(id, kind, title, file, JSON.stringify(rest), created || Date.now()); }
+  media(limit = 100) { return this.q.listMedia.all(limit).map((r) => ({ id: r.id, kind: r.kind, title: r.title, file: r.file, url: `/dc/media/${r.file}`, created: r.created, ...JSON.parse(r.meta || '{}') })); }
+  mediaByFile(file) { return this.q.getMediaByFile.get(file) || null; }
+  deleteMedia(id) { this.q.delMedia.run(id); }
 
   static key(obj) { return createHash('sha256').update(JSON.stringify(obj)).digest('hex').slice(0, 24); }
   cacheGet(key) { const r = this.q.cacheGet.get(key); if (!r || r.expires < Date.now()) return null; return JSON.parse(r.value); }
