@@ -1,0 +1,68 @@
+# Phase 3 — GPU 서버 배포 예시 (vLLM + SGLang + darkcode-core)
+# 사용: cp .env.example .env  (VLLM_API_KEY, SGLANG_API_KEY, DC_TOKEN, HF_TOKEN 채우기)
+#       docker compose -f deploy/docker-compose.server.yml up -d vllm core
+#       (SGLang 은 필요할 때만:  docker compose -f deploy/docker-compose.server.yml --profile sglang up -d sglang)
+# 주의: 엔진 이미지·플래그는 버전마다 바뀝니다. 배포 전에 각 프로젝트 문서에서 현재 플래그를 확인하세요.
+#       GPU 1장이면 vLLM 과 SGLang 을 동시에 띄우지 마세요 (gpu-memory-utilization 합이 1을 넘으면 OOM).
+
+services:
+  vllm:
+    image: vllm/vllm-openai:latest
+    restart: unless-stopped
+    ipc: host
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    command:
+      - --model=Qwen/Qwen3-32B-AWQ
+      - --served-model-name=qwen3-32b
+      - --max-model-len=32768
+      - --gpu-memory-utilization=0.90
+      - --reasoning-parser=qwen3
+      - --api-key=${VLLM_API_KEY}
+    deploy:
+      resources:
+        reservations:
+          devices: [{ driver: nvidia, count: all, capabilities: [gpu] }]
+    expose: ["8000"]
+
+  sglang:
+    image: lmsysorg/sglang:latest
+    profiles: ["sglang"]
+    restart: unless-stopped
+    ipc: host
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    command: >
+      python3 -m sglang.launch_server
+      --model-path Qwen/Qwen3-32B-AWQ --served-model-name qwen3-32b
+      --host 0.0.0.0 --port 30000 --mem-fraction-static 0.85
+      --reasoning-parser qwen3 --api-key ${SGLANG_API_KEY}
+    deploy:
+      resources:
+        reservations:
+          devices: [{ driver: nvidia, count: all, capabilities: [gpu] }]
+    expose: ["30000"]
+
+  core:
+    image: node:24-alpine
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - ../:/app
+      - core-data:/app/data
+    environment:
+      - DC_PROFILE=server
+      - DC_HOST=0.0.0.0
+      - DC_TOKEN=${DC_TOKEN}
+      - VLLM_URL=http://vllm:8000/v1
+      - VLLM_API_KEY=${VLLM_API_KEY}
+      - SGLANG_URL=http://sglang:30000/v1
+      - SGLANG_API_KEY=${SGLANG_API_KEY}
+    command: ["node", "src/server.js"]
+    ports: ["8787:8787"]   # 외부 공개 시 앞단에 HTTPS 리버스 프록시(Caddy/Nginx) 필수
+
+volumes:
+  hf-cache:
+  core-data:
