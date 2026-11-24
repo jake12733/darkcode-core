@@ -7,8 +7,11 @@
 //
 // 계약 (AstraUnifiedEngine.runOnLocal 이 사용)
 //   GET  /health → { ok, name:"darkcode-runner", version, approval, languages, permissionModel, busy }
-//   POST /run    { runId?, targetModule, language?, code, args?|command?, timeoutMs? }
-//        → 200 { executed, exitCode, reason, output(stdout), stderr, timedOut, durationMs, truncated, codeHash }
+//   POST /run    { runId?, targetModule, language?, code | files{이름:내용}+entry, args?|command?, timeoutMs? }
+//        → 200 { executed, exitCode, reason, output(stdout), stderr, timedOut, durationMs, truncated, codeHash, tests? }
+//   POST /run    { ..., jobs:[{ files|code, entry?, args?, label? }] }  (최대 8개 · 승인 한 번 · 순서대로 실행)
+//        → 200 { batch:true, results:[ 위와 같은 결과 + label, entry ] }
+//   tests: entry 가 node:test 를 쓰면 TAP/spec 요약에서 { total, pass, fail, failed:[이름] } 를 뽑는다
 //          reason: ok | nonzero_exit | timeout | unsupported_language | approval_denied | spawn_error
 //        → 400 잘못된 요청 · 403 허용 안 된 Origin/Host · 409 실행 중 · 413 코드 너무 큼
 import http from 'node:http';
@@ -19,7 +22,7 @@ import readline from 'node:readline';
 import { spawn, spawnSync, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-export const VERSION = '0.1.0';
+export const VERSION = '0.2.0';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 export const DEFAULTS = {
@@ -53,6 +56,18 @@ export function detectPermissionFlag() {
   return null;
 }
 
+// 여러 파일 실행: 파일 이름은 작업 폴더 안의 단순 이름만 (경로·상위 폴더 금지)
+const FILE_RE = /^[a-z0-9_.-]{1,40}\.(mjs|js|cjs|json|txt|py)$/i;
+export function parseTap(text) {
+  const t = String(text || '');
+  const num = (k) => { const m = t.match(new RegExp(`^\\s*[#ℹ]\\s*${k}\\s+(\\d+)`, 'm')); return m ? Number(m[1]) : null; };
+  const pass = num('pass'), fail = num('fail'), total = num('tests');
+  if (pass === null && fail === null) return null;
+  const failed = [...t.matchAll(/^\s*not ok \d+ - (.+?)\s*$/gm)].map((m) => m[1].replace(/\s+#\s.*$/, '').trim());
+  if (!failed.length) for (const m of t.matchAll(/^\s*✖\s+(.+?)\s+\(\d/gm)) failed.push(m[1].trim());
+  return { total: total ?? (pass || 0) + (fail || 0), pass: pass || 0, fail: fail || 0, failed: [...new Set(failed)].slice(0, 50) };
+}
+
 function killTree(child) {
   if (!child || child.exitCode !== null) return;
   if (process.platform === 'win32') execFile('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {});
@@ -67,7 +82,7 @@ export function consoleApprover({ timeoutSec = 60 } = {}) {
   let chain = Promise.resolve();
   return (job) => (chain = chain.then(() => new Promise((resolve) => {
     const lines = job.code.split('\n');
-    process.stdout.write(`\n\x1b[33m──── 실행 승인 요청 ────\x1b[0m\n타겟: ${job.targetModule} · 언어: ${job.language} · ${lines.length}줄 · origin: ${job.origin || '-'} · hash ${job.codeHash}\n`);
+    process.stdout.write(`\n\x1b[33m──── 실행 승인 요청 ────\x1b[0m\n타겟: ${job.targetModule} · 언어: ${job.language} · ${job.batch ? `묶음 실행 ${job.batch}개 (후보 코드 + 테스트) · ` : ''}${lines.length}줄 · origin: ${job.origin || '-'} · hash ${job.codeHash}\n`);
     lines.slice(0, 30).forEach((l, i) => process.stdout.write(`\x1b[2m${String(i + 1).padStart(3)}│\x1b[0m ${l}\n`));
     if (lines.length > 30) process.stdout.write(`\x1b[2m   │ … ${lines.length - 30}줄 더\x1b[0m\n`);
     if (job.args.length) process.stdout.write(`인자: ${JSON.stringify(job.args)}\n`);
@@ -102,8 +117,9 @@ export function createRunner(opts = {}) {
     return new Promise((resolve) => {
       const dir = path.join(wsRoot, job.runId);
       fs.mkdirSync(dir, { recursive: true });
-      const file = path.join(dir, job.language === 'python' ? 'main.py' : 'main.mjs');
-      fs.writeFileSync(file, job.code, 'utf8');
+      for (const [name, content] of Object.entries(job.files)) fs.writeFileSync(path.join(dir, name), content, 'utf8');
+      const file = path.join(dir, job.entry);
+      const usesNodeTest = job.language === 'javascript' && /node:test/.test(job.files[job.entry] || '');
       let cmd, argv;
       if (job.language === 'python') { cmd = cfg.pythonCmd; argv = [file, ...job.args]; }
       else { cmd = process.execPath; argv = [...(permFlag ? [permFlag, `--allow-fs-read=${dir}`, `--allow-fs-write=${dir}`] : []), file, ...job.args]; }
@@ -123,7 +139,8 @@ export function createRunner(opts = {}) {
       child.on('error', (e) => finish({ executed: false, exitCode: null, reason: 'spawn_error', output: out.trim(), stderr: `SPAWN_ERROR: ${e.message}`, timedOut: false }));
       child.on('close', (code, signal) => {
         if (timedOut) return finish({ executed: false, exitCode: code, reason: 'timeout', output: out.trim(), stderr: `${err.trim()}\nTIMEOUT: ${job.timeoutMs}ms 초과로 강제 종료`.trim(), timedOut: true, signal });
-        finish({ executed: true, exitCode: code, reason: code === 0 ? 'ok' : 'nonzero_exit', output: out.trim(), stderr: err.trim(), timedOut: false, signal });
+        const tests = usesNodeTest ? parseTap(`${out}\n${err}`) : null;
+        finish({ executed: true, exitCode: code, reason: code === 0 ? 'ok' : 'nonzero_exit', output: out.trim(), stderr: err.trim(), timedOut: false, signal, ...(tests ? { tests } : {}) });
       });
     });
   }
@@ -146,44 +163,76 @@ export function createRunner(opts = {}) {
     }
     if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
     const p = req.url.split('?')[0];
-    if (req.method === 'GET' && p === '/health') return send(res, 200, { ok: true, name: 'darkcode-runner', version: VERSION, approval: cfg.approver ? 'custom' : cfg.approval, languages: languages(), permissionModel: permFlag, busy });
+    if (req.method === 'GET' && p === '/health') return send(res, 200, { ok: true, name: 'darkcode-runner', version: VERSION, approval: cfg.approver ? 'custom' : cfg.approval, languages: languages(), permissionModel: permFlag, busy, features: ['files', 'jobs', 'tap'] });
     if (!(req.method === 'POST' && p === '/run')) return send(res, 404, { error: `없는 경로: ${req.method} ${p}` });
 
     let raw = '';
     for await (const c of req) { raw += c; if (raw.length > cfg.maxCodeBytes * 2 + 10000) return send(res, 413, { error: 'request too large' }); }
     let b; try { b = JSON.parse(raw || '{}'); } catch { return send(res, 400, { error: 'JSON 형식 오류' }); }
-    if (typeof b.code !== 'string' || !b.code.trim()) return send(res, 400, { error: 'code 필요' });
-    if (Buffer.byteLength(b.code) > cfg.maxCodeBytes) return send(res, 413, { error: `code 가 ${cfg.maxCodeBytes} bytes 초과` });
+    const isBatch = Array.isArray(b.jobs) && b.jobs.length > 0;
+    if (!isBatch && (typeof b.code !== 'string' || !b.code.trim()) && !(b.files && typeof b.files === 'object')) return send(res, 400, { error: 'code 또는 files 필요' });
+    if (!isBatch && typeof b.code === 'string' && !b.files && Buffer.byteLength(b.code) > cfg.maxCodeBytes) return send(res, 413, { error: `code 가 ${cfg.maxCodeBytes} bytes 초과` });
+    if (isBatch && b.jobs.length > 8) return send(res, 400, { error: 'jobs 는 8개 이하' });
     const targetModule = String(b.targetModule || 'module').slice(0, 120);
     const runId = String(b.runId || `r_${Date.now().toString(36)}`).replace(/[^\w-]/g, '_').slice(0, 64) + '_' + crypto.randomBytes(3).toString('hex');
     // 셸 문자열은 실행하지 않는다: args 배열(우선) 또는 command 를 공백으로 나눈 인자만 스크립트에 전달
     let args = Array.isArray(b.args) ? b.args : (typeof b.command === 'string' && b.command.trim() ? b.command.trim().split(/\s+/) : []);
     if (args.length > 20 || args.some((a) => typeof a !== 'string' || a.length > 200)) return send(res, 400, { error: 'args 는 문자열 20개 이하, 각 200자 이하' });
     const timeoutMs = Math.max(1000, Math.min(Number(b.timeoutMs) || cfg.timeoutMs, cfg.maxTimeoutMs));
-    const codeHash = sha(b.code);
     const language = normalizeLanguage(b.language);
+    const badArgs = (list) => list.length > 20 || list.some((a) => typeof a !== 'string' || a.length > 200);
+    // 작업 목록 만들기 (단일 code · files+entry · jobs 묶음 모두 같은 형태로)
+    const prep = (j, i) => {
+      let files;
+      if (j.files && typeof j.files === 'object' && !Array.isArray(j.files)) {
+        const names = Object.keys(j.files);
+        if (!names.length || names.length > 6) throw { status: 400, error: 'files 는 1~6개' };
+        files = {}; let total = 0;
+        for (const n of names) { if (!FILE_RE.test(n)) throw { status: 400, error: `파일 이름 불가: ${n}` }; if (typeof j.files[n] !== 'string') throw { status: 400, error: `파일 내용은 문자열: ${n}` }; total += Buffer.byteLength(j.files[n]); files[n] = j.files[n]; }
+        if (total > cfg.maxCodeBytes) throw { status: 413, error: `files 합계가 ${cfg.maxCodeBytes} bytes 초과` };
+      } else if (typeof j.code === 'string' && j.code.trim()) {
+        if (Buffer.byteLength(j.code) > cfg.maxCodeBytes) throw { status: 413, error: `code 가 ${cfg.maxCodeBytes} bytes 초과` };
+        files = { [language === 'python' ? 'main.py' : 'main.mjs']: j.code };
+      } else throw { status: 400, error: 'code 또는 files 필요' };
+      const entry = typeof j.entry === 'string' && j.entry ? j.entry : (language === 'python' ? 'main.py' : 'main.mjs');
+      if (!files[entry]) throw { status: 400, error: `entry 파일 없음: ${entry}` };
+      const jargs = Array.isArray(j.args) ? j.args : (i === 0 ? args : []);
+      if (badArgs(jargs)) throw { status: 400, error: 'args 는 문자열 20개 이하, 각 200자 이하' };
+      return { files, entry, args: jargs, label: String(j.label || `job${i + 1}`).slice(0, 40), language: entry.endsWith('.py') ? 'python' : 'javascript' };
+    };
+    let jobList;
+    try { jobList = isBatch ? b.jobs.map((j, i) => prep(j || {}, i)) : [prep(b, 0)]; }
+    catch (e) { return send(res, e.status || 400, { error: e.error || String(e) }); }
+    const codeHash = sha(jobList.map((j) => j.files[j.entry]).join('\n'));
     const logRec = { ts: new Date().toISOString(), origin: origin || null, runId, targetModule, language: language || String(b.language), codeHash };
 
-    if (!language || !languages().includes(language)) {
+    if (!language || !languages().includes(language) || jobList.some((j) => !languages().includes(j.language))) {
       appendLog({ ...logRec, reason: 'unsupported_language' });
       return send(res, 200, { executed: false, exitCode: null, reason: 'unsupported_language', output: '', stderr: `UNSUPPORTED_LANGUAGE: ${b.language} (지원: ${languages().join(', ')})`, timedOut: false, durationMs: 0, codeHash });
     }
     if (busy) return send(res, 409, { error: '다른 실행이 진행 중', reason: 'busy' });
     busy = true;
     try {
-      const job = { runId, targetModule, language, code: b.code, args, timeoutMs, origin, codeHash };
+      const display = isBatch ? jobList.map((j, i) => `### ${i + 1}. ${j.label} · ${j.entry} · ${j.files[j.entry].split('\n').length}줄\n${j.files[j.entry].split('\n').slice(0, 8).join('\n')}`).join('\n\n') : jobList[0].files[jobList[0].entry];
+      const job = { runId, targetModule, language, code: display, args: jobList[0].args, timeoutMs, origin, codeHash, batch: isBatch ? jobList.length : 0 };
       const ap = await approve(job);
       if (!ap.ok) {
         log('warn', `실행 거부 (${ap.by}) · ${targetModule} · ${codeHash}`);
         appendLog({ ...logRec, approval: ap.by, reason: 'approval_denied' });
         return send(res, 200, { executed: false, exitCode: null, reason: 'approval_denied', output: '', stderr: `APPROVAL_DENIED (${ap.by})`, timedOut: false, durationMs: 0, codeHash });
       }
-      log('info', `실행 ${targetModule} · ${language}${permFlag && language === 'javascript' ? ' · 권한 격리' : ''} · ${codeHash}`);
-      const r = await execute(job);
-      log(r.reason === 'ok' ? 'ok' : 'warn', `결과 ${r.reason} · exit ${r.exitCode} · ${r.durationMs}ms · stdout ${r.output.length}자`);
-      appendLog({ ...logRec, approval: ap.by, reason: r.reason, exitCode: r.exitCode, durationMs: r.durationMs });
+      log('info', `실행 ${targetModule} · ${language}${permFlag && language === 'javascript' ? ' · 권한 격리' : ''}${isBatch ? ` · 묶음 ${jobList.length}개` : ''} · ${codeHash}`);
+      const results = [];
+      for (let i = 0; i < jobList.length; i++) {
+        const j = jobList[i];
+        const r = await execute({ ...j, runId: isBatch ? `${runId}_j${i + 1}` : runId, timeoutMs });
+        log(r.reason === 'ok' ? 'ok' : 'warn', `결과 ${isBatch ? j.label + ' ' : ''}${r.reason} · exit ${r.exitCode} · ${r.durationMs}ms · stdout ${r.output.length}자${r.tests ? ` · 테스트 ${r.tests.pass}/${r.tests.total}` : ''}`);
+        appendLog({ ...logRec, label: j.label, approval: ap.by, reason: r.reason, exitCode: r.exitCode, durationMs: r.durationMs, tests: r.tests || undefined });
+        results.push({ ...r, label: j.label, entry: j.entry, codeHash: sha(j.files[j.entry]) });
+      }
       cleanup();
-      return send(res, 200, { ...r, codeHash, workspace: path.relative(HERE, path.join(wsRoot, runId)) });
+      if (isBatch) return send(res, 200, { batch: true, results });
+      return send(res, 200, { ...results[0], codeHash, workspace: path.relative(HERE, path.join(wsRoot, runId)) });
     } finally { busy = false; }
   });
   server.runner = { cfg, permFlag };
