@@ -1,0 +1,278 @@
+DARK CODE 코드 생성 평가 세트 · 숨긴 테스트(test)는 엔진에 절대 보여주지 않는다 · scripts/eval.js 가 읽는다
+형식: "=== TASK <id>" 다음에 "--- prompt" / "--- reference" / "--- test" 블록
+
+=== TASK withholding
+--- prompt
+프리랜서 원천징수(3.3%) 계산 함수를 main.mjs 에 작성하세요. export function withholding(amount): amount(원, 0 이상 정수)를 받아 { tax, net } 을 돌려줍니다. tax = Math.floor(amount * 0.033), net = amount - tax. amount 가 음수거나 정수가 아니면 RangeError 를 던집니다. 직접 실행하면 withholding(1000000) 결과를 출력합니다.
+--- reference
+import { pathToFileURL } from 'node:url';
+export function withholding(amount) {
+  if (!Number.isInteger(amount) || amount < 0) throw new RangeError('amount must be a non-negative integer');
+  const tax = Math.floor(amount * 0.033);
+  return { tax, net: amount - tax };
+}
+if (import.meta.url === pathToFileURL(process.argv[1]).href) console.log(withholding(1000000));
+--- test
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { withholding } from './main.mjs';
+test('100만 원', () => assert.deepEqual(withholding(1000000), { tax: 33000, net: 967000 }));
+test('끝자리 버림', () => assert.deepEqual(withholding(1234567), { tax: 40740, net: 1193827 }));
+test('0 원', () => assert.deepEqual(withholding(0), { tax: 0, net: 0 }));
+test('음수는 RangeError', () => assert.throws(() => withholding(-1), RangeError));
+test('소수는 RangeError', () => assert.throws(() => withholding(10.5), RangeError));
+
+=== TASK slugify
+--- prompt
+export function slugify(text) 를 main.mjs 에 작성하세요: 영문 대문자는 소문자로 바꾸고, 영문 소문자·숫자 이외의 문자(공백·밑줄·한글·기호 등)는 하이픈(-)으로 바꾸고, 연속된 하이픈은 하나로 줄이고, 앞뒤 하이픈은 지운 문자열을 돌려줍니다. 직접 실행하면 slugify('Hello World') 를 출력합니다.
+--- reference
+import { pathToFileURL } from 'node:url';
+export function slugify(text) {
+  return String(text).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+if (import.meta.url === pathToFileURL(process.argv[1]).href) console.log(slugify('Hello World'));
+--- test
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { slugify } from './main.mjs';
+test('기본', () => assert.equal(slugify('Hello World'), 'hello-world'));
+test('공백·밑줄·숫자', () => assert.equal(slugify('  Dental__Clinic  2026 '), 'dental-clinic-2026'));
+test('연속 하이픈', () => assert.equal(slugify('A--B'), 'a-b'));
+test('한글 제거', () => assert.equal(slugify('한글 Only'), 'only'));
+test('빈 문자열', () => assert.equal(slugify(''), ''));
+
+=== TASK formatPhone
+--- prompt
+export function formatPhone(input) 를 main.mjs 에 작성하세요: 문자열에서 숫자만 남긴 뒤 한국 전화번호 형식으로 하이픈을 넣어 돌려줍니다. 규칙: 02 로 시작하면 9자리는 02-XXX-XXXX, 10자리는 02-XXXX-XXXX. 그 외 0 으로 시작하는 10자리는 0XX-XXX-XXXX, 11자리는 0XX-XXXX-XXXX. 이 규칙에 맞지 않으면 null 을 돌려줍니다. 직접 실행하면 formatPhone('01012345678') 을 출력합니다.
+--- reference
+import { pathToFileURL } from 'node:url';
+export function formatPhone(input) {
+  const d = String(input ?? '').replace(/\D/g, '');
+  if (d.startsWith('02')) {
+    if (d.length === 9) return `02-${d.slice(2, 5)}-${d.slice(5)}`;
+    if (d.length === 10) return `02-${d.slice(2, 6)}-${d.slice(6)}`;
+    return null;
+  }
+  if (d.startsWith('0')) {
+    if (d.length === 10) return `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}`;
+    if (d.length === 11) return `${d.slice(0, 3)}-${d.slice(3, 7)}-${d.slice(7)}`;
+  }
+  return null;
+}
+if (import.meta.url === pathToFileURL(process.argv[1]).href) console.log(formatPhone('01012345678'));
+--- test
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { formatPhone } from './main.mjs';
+test('휴대폰', () => assert.equal(formatPhone('01012345678'), '010-1234-5678'));
+test('서울 9자리', () => assert.equal(formatPhone('02-123-4567'), '02-123-4567'));
+test('서울 10자리', () => assert.equal(formatPhone('0212345678'), '02-1234-5678'));
+test('지역 10자리', () => assert.equal(formatPhone('031 123 4567'), '031-123-4567'));
+test('짧은 번호는 null', () => assert.equal(formatPhone('12345'), null));
+test('자릿수 모자람은 null', () => assert.equal(formatPhone('010-1234'), null));
+
+=== TASK parseCsvLine
+--- prompt
+export function parseCsvLine(line) 을 main.mjs 에 작성하세요: CSV 한 줄을 필드 배열로 나눕니다. 쉼표로 구분하고, 큰따옴표로 감싼 필드 안의 쉼표는 그대로 두며, 감싼 필드 안의 큰따옴표 두 개("")는 큰따옴표 하나로 바꿉니다. 빈 문자열은 [''] 입니다. 직접 실행하면 parseCsvLine('a,"b,c",d') 를 출력합니다.
+--- reference
+import { pathToFileURL } from 'node:url';
+export function parseCsvLine(line) {
+  const out = []; let cur = ''; let q = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (q) {
+      if (ch === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; }
+      else cur += ch;
+    } else if (ch === '"') q = true;
+    else if (ch === ',') { out.push(cur); cur = ''; }
+    else cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
+if (import.meta.url === pathToFileURL(process.argv[1]).href) console.log(parseCsvLine('a,"b,c",d'));
+--- test
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { parseCsvLine } from './main.mjs';
+test('기본', () => assert.deepEqual(parseCsvLine('a,b,c'), ['a', 'b', 'c']));
+test('따옴표 안 쉼표', () => assert.deepEqual(parseCsvLine('"a,b",c'), ['a,b', 'c']));
+test('따옴표 두 개', () => assert.deepEqual(parseCsvLine('"he said ""hi""",x'), ['he said "hi"', 'x']));
+test('빈 문자열', () => assert.deepEqual(parseCsvLine(''), ['']));
+test('빈 필드', () => assert.deepEqual(parseCsvLine('a,,c'), ['a', '', 'c']));
+
+=== TASK isOpen
+--- prompt
+병원 진료시간 판정 함수를 main.mjs 에 작성하세요. export function isOpen(schedule, day, time): schedule 은 { mon: ['09:00', '18:00'], tue: [...], ..., sun: null } 형식(휴무는 null 이거나 키가 없음), day 는 'mon'~'sun', time 은 'HH:MM'. 시작 시각 이상이고 종료 시각 미만이면 true, 그 외와 휴무는 false. 직접 실행하면 isOpen({ mon: ['09:00', '18:00'] }, 'mon', '10:00') 을 출력합니다.
+--- reference
+import { pathToFileURL } from 'node:url';
+const toMin = (t) => { const [h, m] = String(t).split(':').map(Number); return h * 60 + m; };
+export function isOpen(schedule, day, time) {
+  const s = schedule && schedule[day];
+  if (!s) return false;
+  const t = toMin(time);
+  return t >= toMin(s[0]) && t < toMin(s[1]);
+}
+if (import.meta.url === pathToFileURL(process.argv[1]).href) console.log(isOpen({ mon: ['09:00', '18:00'] }, 'mon', '10:00'));
+--- test
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { isOpen } from './main.mjs';
+const S = { mon: ['09:00', '18:00'], sat: ['09:00', '13:00'], sun: null };
+test('시작 시각 포함', () => assert.equal(isOpen(S, 'mon', '09:00'), true));
+test('종료 직전', () => assert.equal(isOpen(S, 'mon', '17:59'), true));
+test('종료 시각은 닫힘', () => assert.equal(isOpen(S, 'mon', '18:00'), false));
+test('휴무 null', () => assert.equal(isOpen(S, 'sun', '10:00'), false));
+test('토요일 오후', () => assert.equal(isOpen(S, 'sat', '13:30'), false));
+test('키 없음은 휴무', () => assert.equal(isOpen(S, 'tue', '10:00'), false));
+
+=== TASK paginate
+--- prompt
+export function paginate(total, page, size) 를 main.mjs 에 작성하세요: 전체 개수 total, 요청 페이지 page(1부터), 페이지 크기 size 로 { pages, page, from, to } 를 돌려줍니다. pages = Math.max(1, Math.ceil(total / size)), page 는 1~pages 범위로 보정, from/to 는 그 페이지 항목의 1부터 시작하는 번호 (total 이 0 이면 from 0, to 0). 직접 실행하면 paginate(95, 10, 10) 을 출력합니다.
+--- reference
+import { pathToFileURL } from 'node:url';
+export function paginate(total, page, size) {
+  const pages = Math.max(1, Math.ceil(total / size));
+  const p = Math.min(pages, Math.max(1, Math.floor(page) || 1));
+  if (total === 0) return { pages, page: p, from: 0, to: 0 };
+  return { pages, page: p, from: (p - 1) * size + 1, to: Math.min(total, p * size) };
+}
+if (import.meta.url === pathToFileURL(process.argv[1]).href) console.log(paginate(95, 10, 10));
+--- test
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { paginate } from './main.mjs';
+test('첫 페이지', () => assert.deepEqual(paginate(95, 1, 10), { pages: 10, page: 1, from: 1, to: 10 }));
+test('마지막 페이지', () => assert.deepEqual(paginate(95, 10, 10), { pages: 10, page: 10, from: 91, to: 95 }));
+test('범위 초과 보정', () => assert.deepEqual(paginate(95, 99, 10), { pages: 10, page: 10, from: 91, to: 95 }));
+test('항목 0개', () => assert.deepEqual(paginate(0, 3, 10), { pages: 1, page: 1, from: 0, to: 0 }));
+test('0 페이지 보정', () => assert.deepEqual(paginate(5, 0, 10), { pages: 1, page: 1, from: 1, to: 5 }));
+
+=== TASK vatSplit
+--- prompt
+부가세 포함 금액을 공급가액과 부가세로 나누는 함수를 main.mjs 에 작성하세요. export function vatSplit(total): supply = Math.round(total / 1.1), vat = total - supply 인 { supply, vat } 를 돌려줍니다. 직접 실행하면 vatSplit(11000) 을 출력합니다.
+--- reference
+import { pathToFileURL } from 'node:url';
+export function vatSplit(total) {
+  const supply = Math.round(total / 1.1);
+  return { supply, vat: total - supply };
+}
+if (import.meta.url === pathToFileURL(process.argv[1]).href) console.log(vatSplit(11000));
+--- test
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { vatSplit } from './main.mjs';
+test('11,000원', () => assert.deepEqual(vatSplit(11000), { supply: 10000, vat: 1000 }));
+test('10,000원 반올림', () => assert.deepEqual(vatSplit(10000), { supply: 9091, vat: 909 }));
+test('0원', () => assert.deepEqual(vatSplit(0), { supply: 0, vat: 0 }));
+test('55,000원', () => assert.deepEqual(vatSplit(55000), { supply: 50000, vat: 5000 }));
+
+=== TASK maskName
+--- prompt
+개인정보 보호용 이름 가리기 함수를 main.mjs 에 작성하세요. export function maskName(name): 2글자면 첫 글자 + '*', 3글자 이상이면 첫 글자와 마지막 글자만 남기고 가운데를 모두 '*' 로 바꾸고, 1글자 이하면 그대로 돌려줍니다. 직접 실행하면 maskName('홍길동') 을 출력합니다.
+--- reference
+import { pathToFileURL } from 'node:url';
+export function maskName(name) {
+  const s = [...String(name ?? '')];
+  if (s.length <= 1) return s.join('');
+  if (s.length === 2) return s[0] + '*';
+  return s[0] + '*'.repeat(s.length - 2) + s[s.length - 1];
+}
+if (import.meta.url === pathToFileURL(process.argv[1]).href) console.log(maskName('홍길동'));
+--- test
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { maskName } from './main.mjs';
+test('3글자', () => assert.equal(maskName('윤태현'), '윤*현'));
+test('2글자', () => assert.equal(maskName('홍길'), '홍*'));
+test('4글자', () => assert.equal(maskName('남궁민수'), '남**수'));
+test('1글자', () => assert.equal(maskName('김'), '김'));
+test('빈 문자열', () => assert.equal(maskName(''), ''));
+
+=== TASK groupByDate
+--- prompt
+export function groupByDate(items) 를 main.mjs 에 작성하세요: items 는 [{ date: 'YYYY-MM-DD', amount: 숫자 }] 배열입니다. 날짜별 amount 합계를 { 날짜: 합계 } 객체로 돌려주되, 객체 키는 날짜 오름차순으로 넣습니다. 직접 실행하면 예시 3건의 결과를 출력합니다.
+--- reference
+import { pathToFileURL } from 'node:url';
+export function groupByDate(items) {
+  const m = new Map();
+  for (const it of items || []) m.set(it.date, (m.get(it.date) || 0) + Number(it.amount || 0));
+  const out = {};
+  for (const k of [...m.keys()].sort()) out[k] = m.get(k);
+  return out;
+}
+if (import.meta.url === pathToFileURL(process.argv[1]).href) console.log(groupByDate([{ date: '2026-11-23', amount: 1000 }, { date: '2026-11-22', amount: 500 }, { date: '2026-11-23', amount: 250 }]));
+--- test
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { groupByDate } from './main.mjs';
+const items = [{ date: '2026-11-23', amount: 1000 }, { date: '2026-11-22', amount: 500 }, { date: '2026-11-23', amount: 250 }];
+test('합계', () => assert.deepEqual(groupByDate(items), { '2026-11-22': 500, '2026-11-23': 1250 }));
+test('키 오름차순', () => assert.deepEqual(Object.keys(groupByDate(items)), ['2026-11-22', '2026-11-23']));
+test('빈 배열', () => assert.deepEqual(groupByDate([]), {}));
+
+=== TASK addBusinessDays
+--- prompt
+export function addBusinessDays(dateStr, n) 을 main.mjs 에 작성하세요: 'YYYY-MM-DD' 날짜에서 토·일요일을 건너뛰고 n 영업일 뒤의 날짜를 'YYYY-MM-DD' 로 돌려줍니다 (n = 0 이면 그대로, 공휴일은 고려하지 않음). 시간대 영향을 받지 않게 UTC 로 계산하세요. 직접 실행하면 addBusinessDays('2026-11-20', 1) 을 출력합니다.
+--- reference
+import { pathToFileURL } from 'node:url';
+export function addBusinessDays(dateStr, n) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  let left = n;
+  while (left > 0) { dt.setUTCDate(dt.getUTCDate() + 1); const w = dt.getUTCDay(); if (w !== 0 && w !== 6) left--; }
+  return dt.toISOString().slice(0, 10);
+}
+if (import.meta.url === pathToFileURL(process.argv[1]).href) console.log(addBusinessDays('2026-11-20', 1));
+--- test
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { addBusinessDays } from './main.mjs';
+test('금요일 + 1 = 월요일', () => assert.equal(addBusinessDays('2026-11-20', 1), '2026-11-23'));
+test('월요일 + 5', () => assert.equal(addBusinessDays('2026-11-23', 5), '2026-11-30'));
+test('0 일', () => assert.equal(addBusinessDays('2026-11-21', 0), '2026-11-21'));
+test('토요일 + 1 = 월요일', () => assert.equal(addBusinessDays('2026-11-21', 1), '2026-11-23'));
+test('연말 넘김', () => assert.equal(addBusinessDays('2026-12-31', 1), '2027-01-01'));
+
+=== TASK passwordStrength
+--- prompt
+export function passwordStrength(pw) 를 main.mjs 에 작성하세요: 다음 조건마다 1점씩 더해 0~5 점수를 돌려줍니다. 길이 8 이상 / 영문 대문자 포함 / 영문 소문자 포함 / 숫자 포함 / 영문·숫자가 아닌 특수문자 포함. 직접 실행하면 passwordStrength('Abcdef1!') 을 출력합니다.
+--- reference
+import { pathToFileURL } from 'node:url';
+export function passwordStrength(pw) {
+  const s = String(pw ?? '');
+  return [s.length >= 8, /[A-Z]/.test(s), /[a-z]/.test(s), /[0-9]/.test(s), /[^A-Za-z0-9]/.test(s)].filter(Boolean).length;
+}
+if (import.meta.url === pathToFileURL(process.argv[1]).href) console.log(passwordStrength('Abcdef1!'));
+--- test
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { passwordStrength } from './main.mjs';
+test('빈 값', () => assert.equal(passwordStrength(''), 0));
+test('짧은 소문자', () => assert.equal(passwordStrength('abc'), 1));
+test('긴 소문자', () => assert.equal(passwordStrength('abcdefgh'), 2));
+test('특수문자 없음', () => assert.equal(passwordStrength('Abcdefg1'), 4));
+test('모두 충족', () => assert.equal(passwordStrength('Abcdef1!'), 5));
+test('숫자만 8자리', () => assert.equal(passwordStrength('12345678'), 2));
+
+=== TASK slots
+--- prompt
+예약 시간표 함수를 main.mjs 에 작성하세요. export function slots(start, end, minutes): 'HH:MM' 시작~종료 사이에서 minutes 분 간격 예약 시작 시각('HH:MM') 배열을 돌려줍니다. 각 예약은 시작 시각 + minutes 가 종료 시각 이하일 때만 포함합니다. 직접 실행하면 slots('09:00', '10:00', 30) 을 출력합니다.
+--- reference
+import { pathToFileURL } from 'node:url';
+const toMin = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+const fmt = (x) => `${String(Math.floor(x / 60)).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`;
+export function slots(start, end, minutes) {
+  const out = []; const e = toMin(end);
+  for (let t = toMin(start); t + minutes <= e; t += minutes) out.push(fmt(t));
+  return out;
+}
+if (import.meta.url === pathToFileURL(process.argv[1]).href) console.log(slots('09:00', '10:00', 30));
+--- test
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { slots } from './main.mjs';
+test('30분 간격', () => assert.deepEqual(slots('09:00', '10:00', 30), ['09:00', '09:30']));
+test('끝에 안 맞는 칸 제외', () => assert.deepEqual(slots('09:00', '09:50', 20), ['09:00', '09:20']));
+test('같은 시각', () => assert.deepEqual(slots('13:00', '13:00', 30), []));
+test('45분 간격', () => assert.deepEqual(slots('09:30', '11:00', 45), ['09:30', '10:15']));
