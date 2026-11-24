@@ -17,3 +17,5 @@ jobs:
       - run: node test/runner-test.js
         env:
           RUNNER_REQUIRE_SPAWN: '1'
+      - run: node scripts/eval.js --validate
+      - run: node scripts/eval.js --model mock --min 1
