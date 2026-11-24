@@ -50,6 +50,31 @@ AI 가 만든 코드를 내 PC 에서 **승인 후** 실행하고, 실제 관측
 
 판정: `executed && exitCode === 0 && stdout 있음 && !fallbackUsed` 일 때만 VERIFIED → committed(코드 포함). 실행기 꺼짐·HTTP 오류·승인 거부는 재시도 없이 즉시 중단(`stopReason`).
 
+## 코드 생성 품질 (테스트 우선 · 후보 여러 개 · 평가)
+
+엔진 v3 (`runner/astra-unified-engine.js`) 와 실행기 0.2 (`runner/runner.js`) 는 "실행됐다"가 아니라 **"테스트를 통과했다"** 일 때만 VERIFIED 를 줍니다.
+
+| 기능 | 내용 |
+|-|-|
+| 테스트 우선 (`testsFirst`, 기본 켬) | 코드보다 먼저 요구사항만 보고 `node:test` 테스트를 만들고, 코드와 함께 실행해 전부 통과해야 확정. 테스트를 못 만들면 출력 검증으로 (`result.verification`) |
+| 후보 여러 개 (`candidates`, 최대 4) | 후보 코드를 승인 한 번에 묶음 실행 → 테스트를 가장 많이 통과한 후보만 수정 |
+| 분쟁 테스트 | 모든 후보가 같은 출력으로 같은 테스트에서 실패하면 테스트 쪽 오류로 보고 제외 (`result.tests.disputed`) |
+| 생각 모드 신호 | 모델 호출에 `role · candidate · deep · temperature` 전달 (재시도·추가 후보는 `deep: true`) |
+| 실패 기억 | 재시도로 고친 에러는 원장 `fixes` 에 저장, 같은 종류 에러가 나오면 예전 해결 코드를 참고로 첨부 |
+| 실행기 0.2 | `files` + `entry` (여러 파일) · `jobs` (최대 8개 묶음 · 승인 한 번) · `node:test` 결과 자동 집계 (`tests`) |
+
+### 평가 (숨긴 테스트로 실제 성공률 측정)
+
+`eval/tasks.txt` 에 실무형 과제 12개 (원천징수 3.3%, 부가세, 전화번호, 이름 가리기, 진료시간, 예약 슬롯, 영업일 등 · 숨긴 테스트 59개). 엔진은 숨긴 테스트를 보지 못하고, 끝난 뒤 최종 코드를 따로 채점합니다.
+
+```
+node scripts/eval.js --validate                    정답 코드로 평가 세트 자체 검증
+node scripts/eval.js --model ollama:qwen3:8b       내 PC Ollama 로 실제 평가 (--candidates 2 로 후보 비교)
+node scripts/eval.js --model gateway:role:implementer.code   게이트웨이 경유
+```
+
+결과는 `data/eval-report.md` (통과율 · 거짓 확정 건수 · 평균 시도 · 시간). 모델·설정을 바꿀 때마다 이 숫자로 좋아졌는지 판단합니다.
+
 ## AI 작곡 (ACE-Step 1.5)
 
 대충 친 한 줄 → 작곡 역할(qwen3:8b)이 제목·스타일 태그·가사·BPM·키·길이를 JSON 으로 설계 → [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5)(MIT, 보컬 포함, 50+ 언어, 4~8GB VRAM)가 실제 노래(mp3)를 생성 → `data/media/` 에 저장.
